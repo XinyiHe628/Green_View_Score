@@ -14,8 +14,19 @@ import rasterio
 from rasterio.transform import from_origin
 from pathlib import Path
 from rasterio.crs import CRS
+from scipy.ndimage import distance_transform_edt
+import geopandas as gpd
+from rasterio.features import rasterize
 
-def generate_dsm(las_path: Path, resolution: float, output_tif: Path) -> Path:
+def _fill_gaps_nearest(array: np.ndarray, nodata_mask: np.ndarray) -> np.ndarray:
+    """用最近邻填补array里nodata_mask标记的空洞。"""
+    if not nodata_mask.any():
+        return array
+    indices = distance_transform_edt(nodata_mask, return_distances=False, return_indices=True)
+    return array[tuple(indices)]
+
+
+def generate_dsm(las_path: Path, resolution: float, output_tif: Path, boundary_shp: Path, buffer_m: float) -> Path:
     """
     读取点云,按resolution做栅格化,每个像素取落入其中所有点的最大高度值。
 
@@ -48,12 +59,26 @@ def generate_dsm(las_path: Path, resolution: float, output_tif: Path) -> Path:
     np.maximum.at(dsm.ravel(), flat_idx, z.astype(np.float32))
 
     # 没有任何点落入的像素(还是-inf),标记成nodata
-    nodata_value = -9999.0
     no_data_mask = np.isinf(dsm)
-    dsm[no_data_mask] = nodata_value
+    dsm = _fill_gaps_nearest(dsm, no_data_mask)
+    nodata_value = -9999.0
 
     transform = from_origin(minx, maxy, resolution, resolution)
 
+    # 新增:用meshblock真实形状,把study area之外的像素重新盖回nodata
+    boundary_gdf = gpd.read_file(boundary_shp)
+    study_area = boundary_gdf.union_all()
+    study_area_buffered = study_area.buffer(buffer_m)
+
+    inside_mask = rasterize(
+        [(study_area_buffered, 1)],
+        out_shape=(n_rows, n_cols),
+        transform=transform,
+        fill=0,
+        dtype=np.uint8,
+    ).astype(bool)
+
+    dsm[~inside_mask] = nodata_value   # 不在真实形状范围内的,强制改回nodata
     output_tif.parent.mkdir(parents=True, exist_ok=True)
     with rasterio.open(
         output_tif, "w",

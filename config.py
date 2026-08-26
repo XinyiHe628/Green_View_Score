@@ -31,9 +31,11 @@ BUILDING_SHP = RAW_DIR / "Building_Campus.shp"
 MESHBLOCK_SHP = RAW_DIR / "Meshblock_Campus.shp"
 
 # ---------- 中间产物路径(一般不用改,自动生成到interim目录) ----------
-MERGED_CLIPPED_LAS = INTERIM_DIR / "merged_clipped.laz"
-DSM_PATH = INTERIM_DIR / "dsm.tif"
-CANOPY_PATH = INTERIM_DIR / "canopy.tif"
+MERGED_CLIPPED_LAS = INTERIM_DIR / "test_merged.laz"
+DSM_PATH = INTERIM_DIR / "test_dsm_Afterfill.tif"
+CANOPY_PATH = INTERIM_DIR / "test_canopy.tif"
+INDIVIDUAL_TREES_SHP = INTERIM_DIR / "individual_trees.shp"
+
 
 # ---------- 参数 ----------
 STUDY_AREA_BUFFER_M = 100      # 裁剪时,study area边界往外扩多少米,避免边缘效应(参照Cimburova论文)
