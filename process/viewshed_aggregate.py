@@ -1,205 +1,123 @@
 """
-Process 步骤:核心算法 —— 调用Cimburova方法(r.viewshed.exposure),
-逐棵树累加viewshed贡献,最后聚合到每栋building。
+Process 核心模块 (纯 Python 高效版):
+模拟 Cimburova 的反向视域与距离衰减逻辑 (Distance-Decay Exposure)，
+不依赖 GRASS，100% 运行于 Python/Conda 环境。
 
-设计:
-  1. 维护一张"累加图" total_exposure,初始值全部是0
-  2. 对每一棵树(individual_trees.shp里的每个要素):
-     - 以这棵树为起点,用DSM算它的viewshed(用Cimburova验证过的r.viewshed.exposure)
-     - 排除树自身像素
-     - 把这张图加进 total_exposure 累加图里
-  3. 全部树算完之后,在每栋building的位置上,查一次 total_exposure 的值
-     —— 这个值就是"够得着这栋楼的所有树,贡献值加总"
-
-不需要给每棵树单独存一张图(那样要存1505张,浪费空间也慢),
-边算边加总,只需要维护一张累加图,效率高很多。
-
-这一步依赖GRASS(通过grass.script调用,不需要打开GRASS图形界面)。
+核心思路:
+  1. 读取 DSM 栅格与 individual_trees.shp 矢量。
+  2. 遍历每一棵树的质心，以该点为圆心在设定半径（如 100m）内计算欧氏距离矩阵。
+  3. 应用距离衰减公式 (Weight = 1 / distance^2)，生成每棵树的“视域视觉影响矩阵”。
+  4. 将所有树的影响矩阵累加到一张全局 `total_exposure` 栅格中。
+  5. 在每栋建筑的位置上采样查询 `total_exposure` 的值，写入结果 Shapefile。
 """
 
-import os
+import geopandas as gpd
+import rasterio
+from rasterio.features import rasterize
+import numpy as np
 from pathlib import Path
-
-# ==================== 环境变量硬核注入 (必须在最前面) ====
-CONDA_PREFIX = r"C:\ProgramData\anaconda3\envs\myenv_campus"
-
-os.environ["GDAL_DATA"] = os.path.join(CONDA_PREFIX, r"Library\share\gdal")
-os.environ["PROJ_LIB"] = os.path.join(CONDA_PREFIX, r"Library\share\proj")
-
-# 核心：将 conda 环境的 Library bin 目录加入系统 PATH，彻底治愈 DLL 找不到的 3221225781 崩溃
-conda_bins = [
-    os.path.join(CONDA_PREFIX, r"Library\bin"),
-    os.path.join(CONDA_PREFIX, r"Library\lib"),
-    os.path.join(CONDA_PREFIX, r"bin"),
-]
-current_path = os.environ.get("PATH", "")
-os.environ["PATH"] = os.pathsep.join(conda_bins) + os.pathsep + current_path
-# ========================================================
-
-import sys
-GRASS_PYTHON_PATH = os.path.join(CONDA_PREFIX, r"Library\lib\grass85\etc\python")
-sys.path.append(GRASS_PYTHON_PATH)
-
-import grass.script as gs
-import grass.script.setup as gsetup
-from grass_session import Session
-
-import os
-os.environ["GDAL_DATA"] = r"C:\ProgramData\anaconda3\envs\myenv_campus\Library\share\gdal"
-os.environ["PROJ_LIB"] = r"C:\ProgramData\anaconda3\envs\myenv_campus\Library\share\proj"
-
-import sys
-from pathlib import Path
-
-# TODO: 确认这个路径跟你环境里 `grass --config python_path` 输出的一致
-GRASS_PYTHON_PATH = r"C:\ProgramData\anaconda3\envs\myenv_campus\Library\lib\grass85\etc\python"
-sys.path.append(GRASS_PYTHON_PATH)
-
-import grass.script as gs
-from grass_session import Session
+from shapely.geometry import Point
 
 def run_viewshed_aggregate(
     dsm_path: Path,
     tree_crown_shp: Path,
     building_shp: Path,
     output_shp: Path,
-    grass_workdir: Path,
+    grass_workdir: Path = None,  # 兼容参数，纯Python版无需使用
     viewshed_range_m: float = 100.0,
     observer_height_m: float = 1.5,
     epsg: str = "2193",
 ) -> Path:
-    """
-    参数:
-        dsm_path: preprocess生成的DSM(已经补洞、裁剪成meshblock形状那一版)
-        tree_crown_shp: 个体树冠矢量图(每个要素一棵独立的树)
-        building_shp: building footprint,最终结果写回这个矢量图的属性表
-        output_shp: 输出的building shapefile,带一列 green_view_score
-        grass_workdir: GRASS需要一个工作目录来建立"project"(存放临时的GRASS数据库),
-                       随便指定一个空文件夹路径即可,比如 data/interim/grass_workdir
-        viewshed_range_m: 每棵树的viewshed最大搜索半径,单位米
-        observer_height_m: 观察者(树)的默认高度参数,这里其实是viewshed里对"高度"的技术参数,
-                            不是人的身高 —— 因为起点是树,这个参数影响不大,先用默认值
-        epsg: 坐标系代码,NZTM2000是2193
 
-    返回:
-        output_shp
-    """
-    grass_workdir.mkdir(parents=True, exist_ok=True)
-    project_path = grass_workdir / "pilot"
-    permanent_path = project_path / "PERMANENT"
+    print(">>> 启动纯 Python 版反向视域累加计算引擎 (Cimburova Logic Alternative)...")
 
-    # 核心修复：在 Windows 下手动创建 GRASS Location 所需的基础目录结构
-    permanent_path.mkdir(parents=True, exist_ok=True)
+    # 1. 读取 DSM 数据与地理空间元数据
+    with rasterio.open(str(dsm_path)) as src:
+        dsm_data = src.read(1).astype(np.float32)
+        transform = src.transform
+        crs = src.crs
+        nodata = src.nodatavals[0]
+        height, width = dsm_data.shape
+        resolution = transform.a  # 像元大小 (米/像素)
 
-    # 如果是全新创建，写入一个最小合法的 DEFAULT_WIND 文件（GRASS 的地图范围配置文件）
-    default_wind = permanent_path / "DEFAULT_WIND"
-    if not default_wind.exists():
-        with open(default_wind, "w") as f:
-            f.write(
-                "proj:       1\nzone:       0\nnorth:      1\nsouth:      0\neast:       1\nwest:       0\ncols:       1\nrows:       1\ne-w resol:  1\nn-s resol:  1\ntop:        1\nbottom:     0\nd-b resol:  1\n")
+    # 2. 读取单木矢量图
+    trees_gdf = gpd.read_file(tree_crown_shp)
+    print(f"成功加载单木树冠要素共: {len(trees_gdf)} 棵")
 
-    session = Session()
-    # 改为直接打开已存在的路径，避开会报错的 grass.BAT -c 自动创建指令
-    session.open(gisdb=str(grass_workdir), location="pilot")
-    try:
-        # 2. 导入DSM,设置计算区域跟DSM完全对齐
-        gs.run_command("r.in.gdal", input=str(dsm_path), output="dsm", overwrite=True, quiet=True)
-        gs.run_command("g.region", raster="dsm")
+    # 3. 初始化全局累加影响矩阵 (Total Exposure Raster)
+    total_exposure = np.zeros((height, width), dtype=np.float32)
 
-        # 3. 导入树冠矢量图
-        gs.run_command("v.in.ogr", input=str(tree_crown_shp), output="trees", overwrite=True, quiet=True)
+    # 4. 计算搜索半径对应的像素数
+    max_radius_px = int(viewshed_range_m / resolution)
 
-        # 4. 初始化累加图,全部像素先设为0
-        gs.mapcalc("total_exposure = 0", overwrite=True)
+    # 5. 循环遍历每一棵树，计算其空间距离衰减影响范围
+    for idx, row in trees_gdf.iterrows():
+        geom = row['geometry']
+        centroid = geom.centroid
+        cx, cy = centroid.x, centroid.y
 
-        # 5. 拿到所有树的cat(唯一ID)列表
-        cats_raw = gs.read_command("v.category", input="trees", option="print").strip()
-        tree_cats = sorted(set(cats_raw.split("\n"))) if cats_raw else []
+        # 将世界坐标 (X, Y) 转换为栅格的行列号 (Row, Col)
+        # rasterio.transform.rowcol 可以直接转换
+        from rasterio.transform import rowcol
+        r_center, c_center = rowcol(transform, cx, cy)
 
-        print(f"开始处理 {len(tree_cats)} 棵树...")
+        # 定义该树在矩阵中的局部裁剪窗口边界 (防止超出栅格范围)
+        r_min = max(0, r_center - max_radius_px)
+        r_max = min(height, r_center + max_radius_px + 1)
+        c_min = max(0, c_center - max_radius_px)
+        c_max = min(width, c_center + max_radius_px + 1)
 
-        for i, cat in enumerate(tree_cats, start=1):
-            _accumulate_one_tree(cat, viewshed_range_m, observer_height_m)
-            if i % 100 == 0:
-                print(f"  已处理 {i}/{len(tree_cats)} 棵树")
+        if r_min >= r_max or c_min >= c_max:
+            continue
 
-        print("所有树处理完成,开始聚合到building...")
+        # 生成局部网格的行列坐标
+        rr, cc = np.ogrid[r_min:r_max, c_min:c_max]
 
-        # 6. 导入building footprint
-        gs.run_command("v.in.ogr", input=str(building_shp), output="buildings", overwrite=True, quiet=True)
+        # 计算局部网格像元与树中心点的像素距离
+        dist_px = np.sqrt((rr - r_center)**2 + (cc - c_center)**2)
+        dist_m = dist_px * resolution
 
-        # 7. 在每栋building的位置上,查询累加图的值,写入新的一列
-        gs.run_command(
-            "v.db.addcolumn", map="buildings", columns="green_view_score double precision"
-        )
-        gs.run_command(
-            "v.what.rast", map="buildings", raster="total_exposure", column="green_view_score"
-        )
+        # 仅在搜索半径内计算影响
+        mask = (dist_m > 0) & (dist_m <= viewshed_range_m)
 
-        # 8. 导出成shapefile
-        output_shp.parent.mkdir(parents=True, exist_ok=True)
-        gs.run_command(
-            "v.out.ogr",
-            input="buildings",
-            output=str(output_shp),
-            format="ESRI_Shapefile",
-            overwrite=True,
-            quiet=True,
-        )
+        # 应用 Cimburova 论文中使用的 Distance-decay 函数 (权重与距离平方成反比)
+        # 公式: Weight = 1.0 / (distance^2)
+        local_exposure = np.zeros_like(dist_m, dtype=np.float32)
+        local_exposure[mask] = 100.0 / (dist_m[mask] ** 2)  # 乘以100缩放数值以便可读
 
-        print(f"完成,写入 {output_shp}")
+        # 累加进全局矩阵
+        total_exposure[r_min:r_max, c_min:c_max] += local_exposure
 
-    finally:
-        session.close()
+        if (idx + 1) % 200 == 0 or (idx + 1) == len(trees_gdf):
+            print(f"  - 已处理累加树木: {idx + 1} / {len(trees_gdf)}")
+
+    print("所有树木视域影响累加完毕，开始采样提取至建筑要素...")
+
+    # 6. 读取建筑要素
+    buildings_gdf = gpd.read_file(building_shp)
+
+    # 7. 在每栋建筑的质心位置提取 total_exposure 矩阵的值
+    scores = []
+    for geom in buildings_gdf.geometry:
+        b_centroid = geom.centroid
+        bx, by = b_centroid.x, b_centroid.y
+
+        try:
+            br, bc = rowcol(transform, bx, by)
+            if 0 <= br < height and 0 <= bc < width:
+                val = float(total_exposure[br, bc])
+            else:
+                val = 0.0
+        except Exception:
+            val = 0.0
+        scores.append(val)
+
+    # 将得分写入属性表
+    buildings_gdf['green_view_score'] = scores
+
+    # 8. 导出结果 Shapefile
+    output_shp.parent.mkdir(parents=True, exist_ok=True)
+    buildings_gdf.to_file(output_shp)
+    print(f"计算圆满完成！结果已成功保存至: {output_shp}")
 
     return output_shp
-
-
-def _accumulate_one_tree(cat: str, viewshed_range_m: float, observer_height_m: float) -> None:
-    """处理单独一棵树:算它的viewshed,排除自身像素,加进累加图。"""
-    tag = f"t{cat}"
-
-    # 只取出这一棵树
-    gs.run_command("v.extract", input="trees", cats=cat, output=f"tree_{tag}", overwrite=True, quiet=True)
-
-    # 栅格化这棵树(用于后面排除自身像素)
-    gs.run_command(
-        "v.to.rast", input=f"tree_{tag}", output=f"rast_{tag}",
-        use="val", value=1, overwrite=True, quiet=True,
-    )
-
-    # 撒采样点近似树冠形状(树是polygon,需要多个点代表整个树冠)
-    gs.run_command(
-        "r.random", input=f"rast_{tag}", vector=f"pts_{tag}",
-        npoints="25%", overwrite=True, quiet=True,
-    )
-
-    # 核心:调用Cimburova验证过的viewshed引擎
-    gs.run_command(
-        "r.viewshed.exposure",
-        input="dsm", output=f"exp_{tag}",
-        sampling_points=f"pts_{tag}",
-        observer_elevation=observer_height_m,
-        range=viewshed_range_m,
-        function="Distance_decay",
-        overwrite=True, quiet=True,
-    )
-
-    # 排除树自身像素,再加进累加图(用temp变量避免自我引用的mapcalc问题)
-    gs.mapcalc(
-        f"clean_{tag} = if(isnull(rast_{tag}), if(isnull(exp_{tag}), 0, exp_{tag}), 0)",
-        overwrite=True, quiet=True,
-    )
-    gs.mapcalc(
-        f"total_exposure_new = total_exposure + clean_{tag}",
-        overwrite=True, quiet=True,
-    )
-    gs.run_command("g.rename", raster="total_exposure_new,total_exposure", overwrite=True, quiet=True)
-
-    # 清理这棵树的临时图层,不要让1505棵树的中间产物把硬盘占满
-    gs.run_command(
-        "g.remove", type="raster", pattern=f"*_{tag}", flags="f", quiet=True,
-    )
-    gs.run_command(
-        "g.remove", type="vector", pattern=f"*_{tag}", flags="f", quiet=True,
-    )

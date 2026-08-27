@@ -6,6 +6,5 @@ run_viewshed_aggregate(
     tree_crown_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\individual_trees.shp"),
     building_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\Building_Campus.shp"),
     output_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\building_result.shp"),
-    grass_workdir=Path(r"C:\Users\xhe40\Thesis_Data\grass_test_clean"),
     viewshed_range_m=100.0,
 )
