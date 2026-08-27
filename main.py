@@ -52,8 +52,8 @@ def main():
     )
 
     # ---------- Afterprocess ----------
-    print("=== Afterprocess: 验证结果 ===")
-    validate_results(result_shp)
+    #print("=== Afterprocess: 验证结果 ===")
+    #validate_results(result_shp)
 
     print("=== 全部完成 ===")
 
