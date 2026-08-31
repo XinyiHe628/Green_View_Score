@@ -42,6 +42,7 @@ def calculate_green_view_tree_centric(
         tree_crown_shp: Path,
         building_shp: Path,
         output_shp: Path,
+        output_observer_points_shp: Path = None,   # 新增: observer点输出路径
         viewshed_range_m: float = 100.0,
         floor_height_m: float = 3.0,
         floor_eye_offset: float = 1.5,
@@ -61,19 +62,22 @@ def calculate_green_view_tree_centric(
     print("2. 加载building和树木矢量...")
     trees = gpd.read_file(tree_crown_shp)
     buildings = gpd.read_file(building_shp)
+    crs = buildings.crs   # 记录坐标系, 后面输出点shapefile要用
 
     if tree_id_field not in trees.columns:
         raise ValueError(f"树木数据里没有 {tree_id_field} 字段, 检查一下individual_trees.shp的列名")
 
-    # 用真实Tree_ID烧录树冠栅格, 不再用行号代替
     tree_shapes = ((geom, tid) for geom, tid in zip(trees.geometry, trees[tree_id_field]))
     tree_id_mask = rasterize(tree_shapes, out_shape=dsm_array.shape, transform=transform,
                               fill=0, dtype=np.int32)
 
     print("3. 估算每栋建筑层数, 生成所有observer点(building x floor)...")
-    observer_records = []  # 每条记录代表一个"某栋楼第几层"的观察点
+    observer_records = []
     buildings["bldg_h_m"] = 0.0
     buildings["num_floors"] = 1
+
+    # 记录building_o字段名(方便observer点输出时对应回原始building编号)
+    building_id_field = "building_o" if "building_o" in buildings.columns else None
 
     for b_idx, row in tqdm(buildings.iterrows(), total=len(buildings), desc="Building setup"):
         h, n_floors = estimate_building_floors(row.geometry, ndsm_array, transform,
@@ -94,7 +98,9 @@ def calculate_green_view_tree_centric(
         for floor_idx in range(n_floors):
             eye_h = floor_eye_offset + floor_idx * floor_height_m
             observer_records.append({
-                "building_idx": b_idx, "floor_idx": floor_idx,
+                "building_idx": b_idx,
+                "building_o": row[building_id_field] if building_id_field else b_idx,
+                "floor_idx": floor_idx,
                 "row": r0, "col": c0, "x": obs_pt.x, "y": obs_pt.y,
                 "z_observer": base_elev + eye_h,
             })
@@ -102,7 +108,6 @@ def calculate_green_view_tree_centric(
     if not observer_records:
         raise ValueError("没有生成任何有效observer点, 检查building数据和DEM是否对齐/同一坐标系")
 
-    # 建KDTree, 方便后面按每棵树的位置快速查"附近有哪些observer点", 不用每棵树都扫一遍全部observer
     obs_xy = np.array([[r["x"], r["y"]] for r in observer_records])
     obs_kdtree = cKDTree(obs_xy)
 
@@ -115,7 +120,6 @@ def calculate_green_view_tree_centric(
         tree_id = t_row[tree_id_field]
         geom = t_row.geometry
 
-        # 只在这棵树自己的bounding box范围内找它的像素, 不用扫全图
         minx, miny, maxx, maxy = geom.bounds
         col_a, row_a = ~transform * (minx, maxy)
         col_b, row_b = ~transform * (maxx, miny)
@@ -131,7 +135,6 @@ def calculate_green_view_tree_centric(
         tp_rows = tp_rows + row_min
         tp_cols = tp_cols + col_min
 
-        # 查这棵树附近viewshed_range_m内, 有哪些observer点(building-floor)
         tc = geom.centroid
         nearby_idx = obs_kdtree.query_ball_point([tc.x, tc.y], r=viewshed_range_m + 5.0)
         if not nearby_idx:
@@ -193,12 +196,33 @@ def calculate_green_view_tree_centric(
     buildings.to_file(output_shp)
     print(f"🎉 完成! 写入 {output_shp}")
 
+    # ===== 新增: 输出observer点shapefile, 方便fieldwork =====
+    if output_observer_points_shp is not None:
+        print(f"6. 生成observer点shapefile, 供fieldwork使用...")
+        point_records = []
+        for obs_i, rec in enumerate(observer_records):
+            point_records.append({
+                "building_o": rec["building_o"],
+                "floor": rec["floor_idx"] + 1,          # 从1开始, 跟GVS_F1/VTC_F1对应
+                "z_observ_m": round(rec["z_observer"], 2),
+                "VTC": len(visible_sets[obs_i]),          # 这一层可见树木数, 方便现场核对
+                "GVS": round(scores[obs_i], 3),
+                "geometry": Point(rec["x"], rec["y"]),
+            })
+
+        observer_points_gdf = gpd.GeoDataFrame(point_records, crs=crs)
+        output_observer_points_shp.parent.mkdir(parents=True, exist_ok=True)
+        observer_points_gdf.to_file(output_observer_points_shp)
+        print(f"🎉 observer点shapefile已写入: {output_observer_points_shp}")
+        print(f"   共 {len(observer_points_gdf)} 个观察点(building x floor)")
+
 
 if __name__ == "__main__":
     calculate_green_view_tree_centric(
         dsm_path=Path(r"C:\Users\xhe40\Thesis_Data\Campus\test_dsm_Afterfill.tif"),
         dem_path=Path(r"C:\Users\xhe40\Thesis_Data\Campus\test_dem_1m.tif"),
         tree_crown_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\individual_trees.shp"),
-        building_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\Building_Campus.shp"),
+        building_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\Building_Campus_with_floors.shp"),
         output_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\building_result_3D_treecentric.shp"),
+        output_observer_points_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\observer_points.shp"),
     )
