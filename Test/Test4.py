@@ -1,5 +1,5 @@
 from pathlib import Path
-from preprocess.generate_individual_trees import generate_individual_trees
+from preprocess.pre05_generate_individual_trees import generate_individual_trees
 
 RAW_DIR = Path(r"C:\Users\xhe40\Thesis_Data\Campus")
 

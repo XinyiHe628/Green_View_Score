@@ -1,5 +1,5 @@
 from pathlib import Path
-from preprocess.generate_dsm import generate_dsm
+from preprocess.pre03_generate_dsm import generate_dsm
 import rasterio
 import numpy as np
 

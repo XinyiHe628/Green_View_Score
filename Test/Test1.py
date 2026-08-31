@@ -1,5 +1,5 @@
 from pathlib import Path
-from preprocess.merge_clip_Lidar import merge_and_clip_lidar
+from preprocess.pre01_merge_clip_Lidar import merge_and_clip_lidar
 
 merge_and_clip_lidar(
     tile_paths=[

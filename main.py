@@ -9,9 +9,9 @@
 """
 
 import config
-from preprocess.merge_clip_Lidar import merge_and_clip_lidar
-from preprocess.generate_dsm import generate_dsm
-from preprocess.generate_canopy import generate_canopy
+from preprocess.pre01_merge_clip_Lidar import merge_and_clip_lidar
+from preprocess.pre03_generate_dsm import generate_dsm
+from preprocess.pre04_generate_canopy import generate_canopy
 from process.viewshed_aggregate import run_viewshed_aggregate
 from postprocess.validation import validate_results
 

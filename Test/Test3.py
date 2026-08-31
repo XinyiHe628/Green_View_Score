@@ -1,5 +1,5 @@
 from pathlib import Path
-from preprocess.generate_canopy import generate_canopy
+from preprocess.pre04_generate_canopy import generate_canopy
 
 
 RAW_DIR = Path(r"C:\Users\xhe40\Thesis_Data\Campus")
