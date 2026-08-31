@@ -44,7 +44,7 @@ def calculate_green_view_tree_centric(
         output_shp: Path,
         output_observer_points_shp: Path = None,   # 新增: observer点输出路径
         viewshed_range_m: float = 100.0,
-        floor_height_m: float = 3.0,
+        floor_height_m: float = 4.0,
         floor_eye_offset: float = 1.5,
         trunk_clear_height: float = 2.5,
         wall_offset_m: float = 0.5,
@@ -222,7 +222,8 @@ if __name__ == "__main__":
         dsm_path=Path(r"C:\Users\xhe40\Thesis_Data\Campus\test_dsm_Afterfill.tif"),
         dem_path=Path(r"C:\Users\xhe40\Thesis_Data\Campus\test_dem_1m.tif"),
         tree_crown_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\individual_trees.shp"),
-        building_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\Building_Campus_with_floors.shp"),
-        output_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\building_result_3D_treecentric.shp"),
-        output_observer_points_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\observer_points.shp"),
+        building_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\Building_Campus_with_floors_4.shp"),
+        output_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\building_result_3D_treecentric_4.shp"),
+        output_observer_points_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\observer_points_4.shp"),
+        floor_height_m=4.0,
     )

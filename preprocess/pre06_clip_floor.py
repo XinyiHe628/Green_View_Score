@@ -69,7 +69,7 @@ def generate_ndsm_and_floors(
         building_shp: Path,
         output_building_shp: Path,
         output_ndsm_path: Path = None,
-        floor_height_m: float = 3.0,
+        floor_height_m: float = 4.0,
         height_percentile: float = 90,
         end_lifespan_field: str = "end_lifesp",
 ):
@@ -131,8 +131,8 @@ if __name__ == "__main__":
         dsm_path=Path(r"C:\Users\xhe40\Thesis_Data\Campus\test_dsm_Afterfill.tif"),
         dem_path=Path(r"C:\Users\xhe40\Thesis_Data\Campus\test_dem_1m.tif"),
         building_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\Building_Campus.shp"),
-        output_building_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\Building_Campus_with_floors.shp"),
+        output_building_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\Building_Campus_with_floors_4.shp"),
         output_ndsm_path=Path(r"C:\Users\xhe40\Thesis_Data\Campus\ndsm_1m.tif"),
-        floor_height_m=3.0,
+        floor_height_m=4.0,
         height_percentile=90,
     )
