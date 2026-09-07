@@ -2,7 +2,7 @@
 Preprocess 步骤3: 生成 Canopy (树冠) 栅格。
 
 重构思路:
-  - 放弃“DSM - DTM 然后剪矢量”的传统方案，直接利用标准 LiDAR 点云的自带分类 (Class 4/5 为植被)。
+  - 放弃"DSM - DTM 然后剪矢量"的传统方案，直接利用标准 LiDAR 点云的自带分类 (Class 4/5 为植被)。
   - 将 Class 4/5 植被点直接栅格化到与 DSM 完全对齐的网格中。
   - 计算 CHM (DSM - DTM) 仅用于根据 height_threshold 过滤低矮植被 (如 < 2m 的灌木/草地)。
   - 使用形态学开运算 (Morphological Opening) 瞬间抹除孤立噪点与微小伪影，无需依赖 Building Footprint 矢量！
@@ -29,7 +29,7 @@ def generate_canopy(
     output_tif: Path,
     height_threshold: float = 2.0,
     ground_class: int = 2,
-    veg_classes: list = [4, 5],  # Standard LAS: 4=Medium Veg, 5=High Veg
+    veg_classes: list = [5],  # 只用 Class 5 (High Vegetation)
 ) -> Path:
     """
     参数:
@@ -38,8 +38,10 @@ def generate_canopy(
         output_tif: 输出的 Canopy 二值栅格 (1=树冠, 0=非树冠)
         height_threshold: 树冠高度阈值 (米)，低于此高度的植被判定为草地/低矮灌木
         ground_class: LAS 地面点分类码 (标准=2)
-        veg_classes: LAS 植被点分类码列表 (标准=[4, 5])
+        veg_classes: LAS 植被点分类码列表 (现在默认只用 [5])
     """
+    print(f"当前使用的veg_classes: {veg_classes}")
+
     # 1. 读取 DSM 尺寸与 Transform 信息 (保证输出栅格 100% 对齐)
     with rasterio.open(dsm_path) as dsm_src:
         dsm = dsm_src.read(1)
@@ -72,10 +74,10 @@ def generate_canopy(
     np.minimum.at(dtm.ravel(), flat_idx_g, gz.astype(np.float32))
     dtm = _fill_gaps_nearest(dtm, np.isinf(dtm))
 
-    # 4. 核心逻辑修改：直接提取 Class 4 和 Class 5 的植被点
+    # 4. 核心逻辑：直接提取植被点
     is_veg = np.isin(las_cls, veg_classes)
     if not is_veg.any():
-        print("警告: 未在 LAS 中提取到 Class 4/5 植被点，请检查点云分类！")
+        print("警告: 未在 LAS 中提取到指定分类码的植被点，请检查点云分类！")
 
     vx, vy, vz = np.array(las.x)[is_veg], np.array(las.y)[is_veg], np.array(las.z)[is_veg]
 
@@ -94,7 +96,6 @@ def generate_canopy(
     canopy_binary = (veg_chm >= height_threshold)
 
     # 7. 后处理：形态学开运算 (Opening) 抹除微小噪点和边缘粗糙点
-    # structure 定义 3x3 的连通域
     cleaned_canopy = binary_opening(canopy_binary, structure=np.ones((3, 3))).astype(np.uint8)
 
     # 如果 DSM 有 NODATA 区域，同步掩膜
@@ -117,3 +118,15 @@ def generate_canopy(
     n_canopy_pixels = cleaned_canopy.sum()
     print(f"Canopy 生成成功 (已消除建筑伪影): {n_canopy_pixels} 个像素被判定为树冠 (占比 {n_canopy_pixels / cleaned_canopy.size:.2%}), 写入 {output_tif}")
     return output_tif
+
+
+# ===== 新增: 可以直接跑这个文件, 不用通过 main.py 调用 =====
+if __name__ == "__main__":
+    generate_canopy(
+        las_path=Path(r"C:\Users\xhe40\Thesis_Data\Campus\test_merged.laz"),
+        dsm_path=Path(r"C:\Users\xhe40\Thesis_Data\Campus\test_dsm_Afterfill.tif"),
+        output_tif=Path(r"C:\Users\xhe40\Thesis_Data\Campus\test_canopy_class5only.tif"),
+        height_threshold=2.0,
+        ground_class=2,
+        veg_classes=[5],
+    )
