@@ -41,7 +41,7 @@ def simplify_building_buffer(building_geom, buffer_m: float = 5.0):
 def get_observer_points_along_wall(
         building_geom,
         buffer_m: float = 5.0,
-        interval_m: float = 5.0,
+        interval_m: float = 1                         .0,
         wall_offset_m: float = 0.5,
 ):
     simplified = simplify_building_buffer(building_geom, buffer_m=buffer_m)
@@ -348,9 +348,9 @@ if __name__ == "__main__":
         dem_path=Path(r"C:\Users\xhe40\Thesis_Data\Campus\test_dem_1m.tif"),
         tree_crown_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\individual_trees_high.shp"),
         building_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\Building_Campus_with_floors_4.shp"),
-        output_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\building_result_3D_wallpoints_plusangle_high.shp"),
-        output_observer_points_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\observer_points_wallpoints_plusangle_high.shp"),
+        output_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\result_1m.shp"),
+        output_observer_points_shp=Path(r"C:\Users\xhe40\Thesis_Data\Campus\obsever_1m.shp"),
         floor_height_m=4.0,
         buffer_m=5.0,
-        interval_m=5.0,
+        interval_m=1.0,
     )
